@@ -164,6 +164,44 @@ def test_fixture_logs_no_extra_location_warnings(
     assert not [r for r in caplog.records if "allLocations" in r.getMessage()]
 
 
+@pytest.mark.parametrize("value", ["London, United Kingdom", {"London, United Kingdom": 1}, "", 7])
+def test_non_array_all_locations_warns(
+    payload: list[dict[str, Any]], caplog: pytest.LogCaptureFixture, value: object
+) -> None:
+    job = _raw_job(payload, KNOWN_ID)
+    job["categories"]["allLocations"] = value
+
+    with caplog.at_level(logging.WARNING, logger="canaria.spiders.lever"):
+        p = _parse_job(job, SITE, COMPANY, site_has_department_field=False)
+
+    assert p.location == "Singapore, Singapore"
+    [message] = _lever_warnings(caplog)
+    assert "categories.allLocations" in message and f"site={SITE}" in message and KNOWN_ID in message
+    assert repr(value) in message
+
+
+def test_non_string_all_locations_entry_warns(
+    payload: list[dict[str, Any]], caplog: pytest.LogCaptureFixture
+) -> None:
+    job = _raw_job(payload, KNOWN_ID)
+    job["categories"]["allLocations"].append(42)
+
+    with caplog.at_level(logging.WARNING, logger="canaria.spiders.lever"):
+        p = _parse_job(job, SITE, COMPANY, site_has_department_field=False)
+
+    assert p.location == "Singapore, Singapore"
+    [message] = _lever_warnings(caplog)
+    assert "categories.allLocations" in message and KNOWN_ID in message and "42" in message
+
+
+def test_missing_all_locations_is_silent(payload: list[dict[str, Any]], caplog: pytest.LogCaptureFixture) -> None:
+    job = _raw_job(payload, KNOWN_ID)
+    del job["categories"]["allLocations"]
+    with caplog.at_level(logging.WARNING, logger="canaria.spiders.lever"):
+        assert _parse_job(job, SITE, COMPANY, site_has_department_field=False).location == "Singapore, Singapore"
+    assert not caplog.records
+
+
 def test_bad_job_is_skipped_and_logged(
     payload: list[dict[str, Any]], caplog: pytest.LogCaptureFixture
 ) -> None:
