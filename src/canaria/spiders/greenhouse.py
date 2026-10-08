@@ -32,7 +32,7 @@ def _parse_job(job: dict[str, Any], board: str) -> JobPosting:
         return JobPosting(
             id=str(job_id),
             title=_require_str(job, "title", board).strip(),
-            company=_require_str(job, "company_name", board),
+            company=_require_str(job, "company_name", board).strip(),
             location=location_name.strip(),
             language=_require_str(job, "language", board),
             url=_require_str(job, "absolute_url", board),
@@ -45,14 +45,23 @@ def _parse_job(job: dict[str, Any], board: str) -> JobPosting:
 
 
 def parse_jobs(payload: dict[str, Any], board: str) -> ParseResult:
-    jobs: list[dict[str, Any]] = payload["jobs"]
+    jobs: list[Any] = payload["jobs"]
     total = payload.get("meta", {}).get("total")
     if total != len(jobs):
         logger.warning("board=%s: meta.total=%s but response has %d jobs", board, total, len(jobs))
 
     postings: list[JobPosting] = []
     skipped = 0
-    for job in jobs:
+    for i, job in enumerate(jobs):
+        if not isinstance(job, dict):
+            logger.error(
+                "skipping job: jobs[%d] is %s, not an object (board=%s, job_id=unknown)",
+                i,
+                type(job).__name__,
+                board,
+            )
+            skipped += 1
+            continue
         try:
             postings.append(_parse_job(job, board))
         except (MissingFieldError, InvalidJobError) as e:

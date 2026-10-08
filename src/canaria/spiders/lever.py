@@ -21,6 +21,13 @@ logger = logging.getLogger(__name__)
 POSTINGS_URL: str = "https://api.lever.co/v0/postings/{site}?mode=json"
 
 
+def _company(company: str, site: str) -> str:
+    # Supplied by the caller, not the API, and shared by every job: a blank one is a caller error.
+    if not company.strip():
+        raise ValueError(f"company must not be blank (site={site})")
+    return company.strip()
+
+
 def _require_present(job: dict[str, Any], key: str, site: str) -> Any:
     # For keys whose value may legitimately be empty ("lists": [], "additional": "").
     if key not in job or job[key] is None:
@@ -83,7 +90,7 @@ def _parse_job(job: dict[str, Any], site: str, company: str) -> JobPosting:
         return JobPosting(
             id=job_id,
             title=_require_str(job, "text", site).strip(),
-            company=company,
+            company=_company(company, site),
             location=location,
             language=None,
             url=_require_str(job, "hostedUrl", site),
@@ -95,10 +102,20 @@ def _parse_job(job: dict[str, Any], site: str, company: str) -> JobPosting:
         raise InvalidJobError(site, job_id, e) from e
 
 
-def parse_jobs(payload: list[dict[str, Any]], site: str, company: str) -> ParseResult:
+def parse_jobs(payload: list[Any], site: str, company: str) -> ParseResult:
+    company = _company(company, site)
     postings: list[JobPosting] = []
     skipped = 0
-    for job in payload:
+    for i, job in enumerate(payload):
+        if not isinstance(job, dict):
+            logger.error(
+                "skipping job: payload[%d] is %s, not an object (site=%s, job_id=unknown)",
+                i,
+                type(job).__name__,
+                site,
+            )
+            skipped += 1
+            continue
         try:
             postings.append(_parse_job(job, site, company))
         except (MissingFieldError, InvalidJobError) as e:
