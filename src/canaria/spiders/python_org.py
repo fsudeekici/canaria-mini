@@ -253,6 +253,9 @@ def parse_jobs(listing_pages: list[str], details: dict[str, str]) -> ParseResult
             entries.append(entry)
 
     listed = len(entries) + skipped
+    # No entries at all while the header counts some: the list markup changed, not the board.
+    if total and not listed:
+        raise InvalidPayloadError(BOARD, f"header says {total} jobs but listing has none")
     if total != listed:
         logger.warning("board=%s: header says %s jobs but listing has %d", BOARD, total, listed)
 

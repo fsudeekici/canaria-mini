@@ -488,6 +488,24 @@ def test_every_detail_page_failing_raises(listing_html: str) -> None:
     assert "all 24 listed jobs failed to parse" in str(exc.value)
 
 
+def test_empty_listing_with_nonzero_header_raises(listing_html: str, details: dict[str, str]) -> None:
+    # The entries are gone but the header still counts 24: the list markup changed, not the board.
+    empty = _edit_every_listing_item(listing_html, lambda li: li.decompose())
+    with pytest.raises(InvalidPayloadError) as exc:
+        parse_jobs([empty], details)
+    assert "header says 24 jobs but listing has none" in str(exc.value)
+
+
+def test_fetch_raises_when_first_page_is_empty_but_header_is_not(
+    listing_html: str, details: dict[str, str]
+) -> None:
+    empty = _edit_every_listing_item(listing_html, lambda li: li.decompose())
+    not_found = httpx.Response(404, text=PAGE_2_NOT_FOUND.read_text(encoding="utf-8"))
+    transport, _ = _transport(empty, details, not_found)
+    with httpx.Client(transport=transport) as client, pytest.raises(InvalidPayloadError):
+        fetch_jobs(client, delay=0)
+
+
 def test_fetch_raises_when_every_job_fails(listing_html: str, details: dict[str, str]) -> None:
     not_found = httpx.Response(404, text=PAGE_2_NOT_FOUND.read_text(encoding="utf-8"))
     transport, requested = _transport(_rename_name_class(listing_html), details, not_found)
