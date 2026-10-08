@@ -338,7 +338,9 @@ def test_missing_detail_page_is_skipped_and_logged(
     assert any("detail page not fetched" in r.getMessage() and KNOWN_ID in r.getMessage() for r in caplog.records)
 
 
-def _transport(listing_html: str, details: dict[str, str], page_2: httpx.Response) -> tuple[httpx.MockTransport, list[str]]:
+def _transport(
+    listing_html: str, details: dict[str, str], page_2: httpx.Response, page_3: httpx.Response | None = None
+) -> tuple[httpx.MockTransport, list[str]]:
     requested: list[str] = []
 
     def handler(request: httpx.Request) -> httpx.Response:
@@ -348,6 +350,8 @@ def _transport(listing_html: str, details: dict[str, str], page_2: httpx.Respons
             return httpx.Response(200, text=listing_html)
         if path == "/jobs/" and page == "2":
             return page_2
+        if path == "/jobs/" and page == "3" and page_3 is not None:
+            return page_3
         match = re.fullmatch(r"/jobs/(\d+)/", path)
         if match and match.group(1) in details:
             return httpx.Response(200, text=details[match.group(1)])
@@ -392,3 +396,68 @@ def test_fetch_logs_and_skips_failed_detail_page(
     assert result.skipped == 1
     assert len(result.postings) == 23
     assert any("HTTP 404" in r.getMessage() and KNOWN_ID in r.getMessage() for r in caplog.records)
+
+
+def _edit_every_listing_item(listing_html: str, edit: Callable[[Tag], None]) -> str:
+    soup = BeautifulSoup(listing_html, "html.parser")
+    job_list = soup.select_one("ol.list-recent-jobs")
+    assert job_list is not None
+    items = job_list.find_all("li", recursive=False)
+    assert len(items) == 24
+    for li in items:
+        assert isinstance(li, Tag)
+        edit(li)
+    return str(soup)
+
+
+def test_fetch_continues_past_page_where_every_entry_fails(
+    listing_html: str, details: dict[str, str], caplog: pytest.LogCaptureFixture
+) -> None:
+    # Page 2 is the real listing with every entry broken; it must be counted, not mistaken for a repeat.
+    broken = _edit_every_listing_item(listing_html, _remove(".listing-posted time"))
+    not_found = httpx.Response(404, text=PAGE_2_NOT_FOUND.read_text(encoding="utf-8"))
+    transport, requested = _transport(listing_html, details, httpx.Response(200, text=broken), not_found)
+    with caplog.at_level(logging.WARNING, logger=LOGGER), httpx.Client(transport=transport) as client:
+        result = fetch_jobs(client, delay=0)
+
+    assert "https://www.python.org/jobs/?page=3" in requested
+    assert len(requested) == 3 + 24
+    assert len(result.postings) == 24
+    assert result.skipped == 24
+    assert not any("repeats earlier jobs" in r.getMessage() for r in caplog.records)
+
+
+def test_fetch_stops_at_empty_page(
+    listing_html: str, details: dict[str, str], caplog: pytest.LogCaptureFixture
+) -> None:
+    empty = _edit_every_listing_item(listing_html, lambda li: li.decompose())
+    transport, requested = _transport(listing_html, details, httpx.Response(200, text=empty))
+    with caplog.at_level(logging.WARNING, logger=LOGGER), httpx.Client(transport=transport) as client:
+        result = fetch_jobs(client, delay=0)
+
+    assert "https://www.python.org/jobs/?page=3" not in requested
+    assert len(result.postings) == 24
+    assert result.skipped == 0
+    assert any("page 2 has no jobs" in r.getMessage() for r in caplog.records)
+    assert not any("repeats earlier jobs" in r.getMessage() for r in caplog.records)
+
+
+def test_content_after_contact_info_is_warned(
+    details: dict[str, str], known_entry: ListingEntry, caplog: pytest.LogCaptureFixture
+) -> None:
+    def edit(soup: BeautifulSoup) -> None:
+        contact_list = _contact_heading(soup).find_next_sibling("ul")
+        assert isinstance(contact_list, Tag)
+        contact_list.insert_after(BeautifulSoup("<h2>Benefits</h2><p>Free lunch</p>", "html.parser"))
+
+    unedited = parse_detail(details[KNOWN_ID], known_entry).description
+    with caplog.at_level(logging.WARNING, logger=LOGGER):
+        p = parse_detail(_edit_detail(details[KNOWN_ID], edit), known_entry)
+
+    assert p.description == unedited
+    assert "Free lunch" not in p.description
+    [message] = [r.getMessage() for r in caplog.records if r.levelno == logging.WARNING]
+    assert KNOWN_ID in message and "Contact Info" in message and "board=python.org" in message
+    assert "h2" in message and "p" in message
+    # Only tag names are logged: the text after the heading may be personal contact data.
+    assert "Free lunch" not in message and "Benefits" not in message

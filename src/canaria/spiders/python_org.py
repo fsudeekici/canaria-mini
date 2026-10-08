@@ -162,6 +162,21 @@ def _description(article: Tag, job_id: str) -> str:
     )
     if contact is None:
         raise MissingFieldError(f"description ({_CONTACT_HEADING!r} heading)", BOARD, job_id)
+    # The heading is normally followed by one <ul> of contact details. Anything else is cut too,
+    # but logged by tag name only, since its text may be personal data.
+    after = [
+        node.name if isinstance(node, Tag) else type(node).__name__
+        for node in contact.next_siblings
+        if not (isinstance(node, NavigableString) and not node.strip())
+    ]
+    if after != ["ul"]:
+        logger.warning(
+            "board=%s job_id=%s: description: content after %r heading not stored (expected one <ul>, found %s)",
+            BOARD,
+            job_id,
+            _CONTACT_HEADING,
+            after,
+        )
 
     parts: list[str] = []
     for node in container.children:
@@ -265,8 +280,13 @@ def _fetch(client: httpx.Client, delay: float) -> ParseResult:
         if page_number > 1 and response.status_code == 404:
             break
         response.raise_for_status()
-        page_ids = [e.id for e in parse_listing(response.text).entries]
-        if page_number > 1 and set(page_ids) <= set(ids):
+        page = parse_listing(response.text)
+        page_ids = [e.id for e in page.entries]
+        if page_number > 1 and not page_ids and not page.skipped:
+            logger.warning("board=%s: page %d has no jobs; stopping", BOARD, page_number)
+            break
+        # A page whose every entry failed has no IDs; it is kept so parse_jobs counts the skips.
+        if page_number > 1 and page_ids and set(page_ids) <= set(ids):
             logger.warning("board=%s: page %d repeats earlier jobs; stopping", BOARD, page_number)
             break
         listing_pages.append(response.text)

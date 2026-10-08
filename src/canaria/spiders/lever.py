@@ -109,8 +109,26 @@ def _parse_job(job: dict[str, Any], site: str, company: str, site_has_department
         raise MissingFieldError("categories.location", site, job_id)
     location = location.strip()
 
-    all_locations = categories.get("allLocations") or []
-    extra_locations = [loc for loc in all_locations if isinstance(loc, str) and loc.strip() != location]
+    all_locations = categories.get("allLocations")
+    if all_locations is None:
+        all_locations = []
+    if not isinstance(all_locations, list):
+        logger.warning(
+            "site=%s job_id=%s: categories.allLocations is %r, expected an array; extra locations not checked",
+            site,
+            job_id,
+            all_locations,
+        )
+        all_locations = []
+    non_strings = [loc for loc in all_locations if not isinstance(loc, str)]
+    if non_strings:
+        logger.warning(
+            "site=%s job_id=%s: categories.allLocations has entries that are not strings, not stored: %r",
+            site,
+            job_id,
+            non_strings,
+        )
+    extra_locations =[loc for loc in all_locations if isinstance(loc, str) and loc.strip() != location]
     if extra_locations:
         logger.warning(
             "site=%s job_id=%s: categories.allLocations has extra locations not stored: %s",
