@@ -8,8 +8,10 @@ class JobPosting(BaseModel):
     title: str
     company: str
     location: str
-    language: str
+    # None only for sources that don't provide it (Lever).
+    language: str | None
     url: HttpUrl
     description: str
     posted_at: AwareDatetime
-    updated_at: AwareDatetime
+    # None only for sources that don't provide it (Lever).
+    updated_at: AwareDatetime | None

@@ -74,6 +74,7 @@ def test_description_is_unescaped_html(result: ParseResult) -> None:
 def test_datetimes_are_aware_and_ordered(result: ParseResult) -> None:
     for p in result.postings:
         assert p.posted_at.tzinfo is not None
+        assert p.updated_at is not None, p.id
         assert p.updated_at.tzinfo is not None
         assert p.updated_at >= p.posted_at, p.id
 
