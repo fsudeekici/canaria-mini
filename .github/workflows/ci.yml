@@ -1,0 +1,32 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: pyproject.toml
+
+      - name: Install
+        id: install
+        run: pip install -e '.[dev]'
+
+      - name: pytest
+        run: python -m pytest
+
+      - name: mypy
+        # Run even if pytest failed, so both results show up in one run.
+        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
+        run: mypy src tests scripts
