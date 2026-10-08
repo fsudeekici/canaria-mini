@@ -2,6 +2,7 @@ import copy
 import json
 import logging
 from collections import Counter
+from collections.abc import Callable
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -9,7 +10,13 @@ from typing import Any
 import pytest
 
 from canaria.models import JobPosting
-from canaria.spiders.greenhouse import MissingFieldError, ParseResult, _parse_job, parse_jobs
+from canaria.spiders.greenhouse import (
+    InvalidPayloadError,
+    MissingFieldError,
+    ParseResult,
+    _parse_job,
+    parse_jobs,
+)
 
 FIXTURE: Path = Path(__file__).parent / "fixtures" / "greenhouse" / "airbnb_jobs_2026-10-08.json"
 BOARD: str = "airbnb"
@@ -160,3 +167,52 @@ def test_non_object_job_is_skipped_and_logged(
         f"jobs[{index}] is {type(value).__name__}" in r.getMessage() and f"board={BOARD}" in r.getMessage()
         for r in caplog.records
     )
+
+
+def _without(payload: dict[str, Any], key: str) -> dict[str, Any]:
+    copied = copy.deepcopy(payload)
+    del copied[key]
+    return copied
+
+
+def _with(payload: dict[str, Any], key: str, value: object) -> dict[str, Any]:
+    copied = copy.deepcopy(payload)
+    copied[key] = value
+    return copied
+
+
+@pytest.mark.parametrize(
+    ("make", "problem"),
+    [
+        (lambda p: p["jobs"], "expected a JSON object, got array"),
+        (lambda p: None, "expected a JSON object, got null"),
+        (lambda p: json.dumps(p), "expected a JSON object, got string"),
+        (lambda p: _without(p, "jobs"), "missing 'jobs'"),
+        (lambda p: _with(p, "jobs", None), "'jobs' is null, expected an array"),
+        (lambda p: _with(p, "jobs", {}), "'jobs' is object, expected an array"),
+        (lambda p: _with(p, "meta", [163]), "'meta' is array, expected an object"),
+    ],
+    ids=["array", "null", "string", "no-jobs", "jobs-null", "jobs-object", "meta-array"],
+)
+def test_malformed_response_raises(
+    payload: dict[str, Any], make: Callable[[dict[str, Any]], Any], problem: str
+) -> None:
+    with pytest.raises(InvalidPayloadError) as exc:
+        parse_jobs(make(payload), BOARD)
+    assert exc.value.board == BOARD
+    assert exc.value.problem == problem
+    assert str(exc.value) == f"invalid response (board={BOARD}): {problem}"
+
+
+@pytest.mark.parametrize(
+    "make",
+    [lambda p: _without(p, "meta"), lambda p: _with(p, "meta", None)],
+    ids=["missing", "null"],
+)
+def test_missing_or_null_meta_only_warns(
+    payload: dict[str, Any], caplog: pytest.LogCaptureFixture, make: Callable[[dict[str, Any]], Any]
+) -> None:
+    with caplog.at_level(logging.WARNING, logger="canaria.spiders.greenhouse"):
+        result = parse_jobs(make(payload), BOARD)
+    assert len(result.postings) == 163
+    assert any("meta.total=None" in r.getMessage() for r in caplog.records)

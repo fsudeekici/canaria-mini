@@ -8,13 +8,22 @@ from pydantic import ValidationError
 from canaria.models import JobPosting
 from canaria.spiders._common import (
     InvalidJobError,
+    InvalidPayloadError,
     MissingFieldError,
     ParseResult,
+    _json_type,
     _require,
     _require_str,
 )
 
-__all__ = ["InvalidJobError", "MissingFieldError", "ParseResult", "fetch_jobs", "parse_jobs"]
+__all__ = [
+    "InvalidJobError",
+    "InvalidPayloadError",
+    "MissingFieldError",
+    "ParseResult",
+    "fetch_jobs",
+    "parse_jobs",
+]
 
 logger = logging.getLogger(__name__)
 
@@ -44,9 +53,21 @@ def _parse_job(job: dict[str, Any], board: str) -> JobPosting:
         raise InvalidJobError(board, job_id, e) from e
 
 
-def parse_jobs(payload: dict[str, Any], board: str) -> ParseResult:
-    jobs: list[Any] = payload["jobs"]
-    total = payload.get("meta", {}).get("total")
+def parse_jobs(payload: object, board: str) -> ParseResult:
+    if not isinstance(payload, dict):
+        raise InvalidPayloadError(board, f"expected a JSON object, got {_json_type(payload)}")
+    if "jobs" not in payload:
+        raise InvalidPayloadError(board, "missing 'jobs'")
+    jobs = payload["jobs"]
+    if not isinstance(jobs, list):
+        raise InvalidPayloadError(board, f"'jobs' is {_json_type(jobs)}, expected an array")
+    # A missing or null "meta" only loses the count check (warned below); any other non-object is malformed.
+    meta = payload.get("meta")
+    if meta is None:
+        meta = {}
+    if not isinstance(meta, dict):
+        raise InvalidPayloadError(board, f"'meta' is {_json_type(meta)}, expected an object")
+    total = meta.get("total")
     if total != len(jobs):
         logger.warning("board=%s: meta.total=%s but response has %d jobs", board, total, len(jobs))
 
