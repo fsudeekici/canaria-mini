@@ -111,3 +111,30 @@ output/                   created by run_all.py (git-ignored)
   - Python.org is fetched with a 1-second delay between requests and at most 50 listing pages.
 - **The tests cover one saved board per source**, captured on 2026-10-08. Other boards or later
   site changes may contain data the fixtures don't.
+
+## How I built this
+
+I built this project in two days to practice building software mainly by driving coding agents (Claude Code). I planned every change, reviewed the agent's plans and reports, and asked for proof: tests, numbers and live checks.
+
+### My workflow
+1. Plan mode first. No code before I agree with the plan.
+2. Review the plan against the raw data.
+3. Ask for changes, not fix by hand.
+4. Tests first. The agent shows they fail before the fix.
+5. Read the report: Changed / Not handled / Verified.
+6. Branch, PR, merge.
+
+### What the agent got wrong, and how I caught it
+- **Inconsistent cleaning:** the plan trimmed spaces in titles but not in locations. I found it by reading the raw data.
+- **Silent data loss:** extra Lever locations were dropped without a warning. I asked for a warning and a test.
+- **Hidden regression:** making two fields optional for Lever broke type checks for Greenhouse. Tests passed, but mypy failed.
+- **Risky git command:** the agent tried `git stash` on uncommitted work. I stopped it. After a context reset it did it again, so I added a rule to CLAUDE.md.
+- **Personal data:** Python.org pages include recruiter names and emails. The description is cut before "Contact Info", and the fixtures are redacted.
+- **Missing count check:** the page says "24 jobs". I asked the spider to compare this number with what it parsed.
+
+### Problems I found that nobody asked me to look for
+- **Spot check against the live site:** job 8231416 was "Remote" on the site, but our data only said "United States". I added `workplace_type` and checked the same job again.
+- **Code audit:** I asked "where do we drop data without a warning?" This found 16 Greenhouse jobs with more than one office, and 3 more small bugs. All are fixed with tests.
+
+### Agent context
+`CLAUDE.md` holds the rules the agent reads every session: tests on real data, never weaken a test, never drop data silently, a plan checklist, and no `git stash`.
