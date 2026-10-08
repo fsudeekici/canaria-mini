@@ -3,7 +3,7 @@
 Scrapes job postings from company career pages: Greenhouse, Lever, and plain HTML sites.
 
 ## Stack
-- Python 3.12. Type hints on every function, method, and module-level variable.
+- Python ≥ 3.12 (the minimum; test on 3.12 with `.venv312`). Type hints on every function, method, and module-level variable.
 - Job data is modeled with Pydantic. Spiders return model instances, not raw dicts.
 
 ## Testing

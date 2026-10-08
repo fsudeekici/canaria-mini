@@ -25,4 +25,5 @@ testpaths = ["tests"]
 
 [tool.mypy]
 strict = true
+python_version = "3.12"
 plugins = ["pydantic.mypy"]
