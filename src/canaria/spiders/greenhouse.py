@@ -61,8 +61,10 @@ def parse_jobs(payload: object, board: str) -> ParseResult:
     jobs = payload["jobs"]
     if not isinstance(jobs, list):
         raise InvalidPayloadError(board, f"'jobs' is {_json_type(jobs)}, expected an array")
-    # A missing "meta" only loses the count check (warned below); a present but wrong one is malformed.
-    meta = payload.get("meta", {})
+    # A missing or null "meta" only loses the count check (warned below); any other non-object is malformed.
+    meta = payload.get("meta")
+    if meta is None:
+        meta = {}
     if not isinstance(meta, dict):
         raise InvalidPayloadError(board, f"'meta' is {_json_type(meta)}, expected an object")
     total = meta.get("total")

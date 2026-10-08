@@ -190,10 +190,9 @@ def _with(payload: dict[str, Any], key: str, value: object) -> dict[str, Any]:
         (lambda p: _without(p, "jobs"), "missing 'jobs'"),
         (lambda p: _with(p, "jobs", None), "'jobs' is null, expected an array"),
         (lambda p: _with(p, "jobs", {}), "'jobs' is object, expected an array"),
-        (lambda p: _with(p, "meta", None), "'meta' is null, expected an object"),
         (lambda p: _with(p, "meta", [163]), "'meta' is array, expected an object"),
     ],
-    ids=["array", "null", "string", "no-jobs", "jobs-null", "jobs-object", "meta-null", "meta-array"],
+    ids=["array", "null", "string", "no-jobs", "jobs-null", "jobs-object", "meta-array"],
 )
 def test_malformed_response_raises(
     payload: dict[str, Any], make: Callable[[dict[str, Any]], Any], problem: str
@@ -205,8 +204,15 @@ def test_malformed_response_raises(
     assert str(exc.value) == f"invalid response (board={BOARD}): {problem}"
 
 
-def test_missing_meta_only_warns(payload: dict[str, Any], caplog: pytest.LogCaptureFixture) -> None:
+@pytest.mark.parametrize(
+    "make",
+    [lambda p: _without(p, "meta"), lambda p: _with(p, "meta", None)],
+    ids=["missing", "null"],
+)
+def test_missing_or_null_meta_only_warns(
+    payload: dict[str, Any], caplog: pytest.LogCaptureFixture, make: Callable[[dict[str, Any]], Any]
+) -> None:
     with caplog.at_level(logging.WARNING, logger="canaria.spiders.greenhouse"):
-        result = parse_jobs(_without(payload, "meta"), BOARD)
+        result = parse_jobs(make(payload), BOARD)
     assert len(result.postings) == 163
     assert any("meta.total=None" in r.getMessage() for r in caplog.records)
