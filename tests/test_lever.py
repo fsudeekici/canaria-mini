@@ -169,3 +169,38 @@ def test_bad_job_is_skipped_and_logged(
     assert result.skipped == 1
     assert len(result.postings) == 312
     assert any("'text'" in r.getMessage() and KNOWN_ID in r.getMessage() for r in caplog.records)
+
+
+def test_company_whitespace_is_stripped(payload: list[dict[str, Any]]) -> None:
+    job = _raw_job(payload, KNOWN_ID)
+    assert _parse_job(job, SITE, " Palantir \n").company == "Palantir"
+
+
+@pytest.mark.parametrize("company", ["", "   ", "\n\t"])
+def test_blank_company_raises(payload: list[dict[str, Any]], company: str) -> None:
+    with pytest.raises(ValueError, match=rf"company must not be blank \(site={SITE}\)"):
+        parse_jobs(payload, SITE, company)
+    with pytest.raises(ValueError, match="company must not be blank"):
+        parse_jobs([], SITE, company)
+    with pytest.raises(ValueError, match="company must not be blank"):
+        _parse_job(_raw_job(payload, KNOWN_ID), SITE, company)
+
+
+@pytest.mark.parametrize("value", [None, KNOWN_ID, 42, [], True])
+def test_non_object_job_is_skipped_and_logged(
+    payload: list[dict[str, Any]], caplog: pytest.LogCaptureFixture, value: object
+) -> None:
+    broken: list[Any] = copy.deepcopy(payload)
+    index = next(i for i, j in enumerate(broken) if j["id"] == KNOWN_ID)
+    broken[index] = value
+
+    with caplog.at_level(logging.ERROR, logger="canaria.spiders.lever"):
+        result = parse_jobs(broken, SITE, COMPANY)
+
+    assert result.skipped == 1
+    assert len(result.postings) == 312
+    assert KNOWN_ID not in {p.id for p in result.postings}
+    assert any(
+        f"payload[{index}] is {type(value).__name__}" in r.getMessage() and f"site={SITE}" in r.getMessage()
+        for r in caplog.records
+    )

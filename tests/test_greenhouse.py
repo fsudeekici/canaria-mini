@@ -134,3 +134,29 @@ def test_bad_job_is_skipped_and_logged(payload: dict[str, Any], caplog: pytest.L
     assert result.skipped == 1
     assert len(result.postings) == 162
     assert any("'title'" in r.getMessage() and "8184174" in r.getMessage() for r in caplog.records)
+
+
+def test_company_whitespace_is_stripped(payload: dict[str, Any]) -> None:
+    job = _raw_job(payload, 8184174)
+    job["company_name"] = " Airbnb \n"
+    assert _parse_job(job, BOARD).company == "Airbnb"
+
+
+@pytest.mark.parametrize("value", [None, "8184174", 8184174, [], True])
+def test_non_object_job_is_skipped_and_logged(
+    payload: dict[str, Any], caplog: pytest.LogCaptureFixture, value: object
+) -> None:
+    broken = copy.deepcopy(payload)
+    index = next(i for i, j in enumerate(broken["jobs"]) if j["id"] == 8184174)
+    broken["jobs"][index] = value
+
+    with caplog.at_level(logging.ERROR, logger="canaria.spiders.greenhouse"):
+        result = parse_jobs(broken, BOARD)
+
+    assert result.skipped == 1
+    assert len(result.postings) == 162
+    assert "8184174" not in {p.id for p in result.postings}
+    assert any(
+        f"jobs[{index}] is {type(value).__name__}" in r.getMessage() and f"board={BOARD}" in r.getMessage()
+        for r in caplog.records
+    )
