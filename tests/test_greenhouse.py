@@ -9,7 +9,7 @@ from typing import Any
 
 import pytest
 
-from canaria.models import JobPosting
+from canaria.models import JobPosting, WorkplaceType
 from canaria.spiders.greenhouse import (
     InvalidPayloadError,
     MissingFieldError,
@@ -216,3 +216,165 @@ def test_missing_or_null_meta_only_warns(
         result = parse_jobs(make(payload), BOARD)
     assert len(result.postings) == 163
     assert any("meta.total=None" in r.getMessage() for r in caplog.records)
+
+
+def _set_workplace(job: dict[str, Any], value: object) -> None:
+    entry = next(m for m in job["metadata"] if m["name"] == "Workplace Type")
+    entry["value"] = value
+
+
+def _drop_workplace(job: dict[str, Any]) -> None:
+    job["metadata"] = [m for m in job["metadata"] if m["name"] != "Workplace Type"]
+
+
+def _gh_warnings(caplog: pytest.LogCaptureFixture) -> list[str]:
+    return [r.getMessage() for r in caplog.records if r.levelno == logging.WARNING]
+
+
+def test_workplace_type(result: ParseResult) -> None:
+    assert _by_id(result, "8184174").workplace_type == WorkplaceType.HYBRID
+    assert _by_id(result, "8231416").workplace_type == WorkplaceType.REMOTE
+    assert _by_id(result, "8257855").workplace_type == WorkplaceType.ONSITE
+    assert Counter(p.workplace_type for p in result.postings) == {
+        WorkplaceType.REMOTE: 136,
+        WorkplaceType.HYBRID: 22,
+        WorkplaceType.ONSITE: 5,
+    }
+
+
+def test_department(result: ParseResult) -> None:
+    assert _by_id(result, "8184174").department == "Business Development"
+    assert _by_id(result, "8231416").department == "Financial Planning and Analysis"
+    assert _by_id(result, "8257855").department == "Software Engineering"
+    departments = Counter(p.department for p in result.postings)
+    assert None not in departments
+    assert len(departments) == 33
+    assert departments["Software Engineering"] == 42
+
+
+def test_fixture_logs_no_warnings(payload: dict[str, Any], caplog: pytest.LogCaptureFixture) -> None:
+    with caplog.at_level(logging.WARNING, logger="canaria.spiders.greenhouse"):
+        parse_jobs(payload, BOARD)
+    assert not caplog.records
+
+
+@pytest.mark.parametrize(
+    ("value", "expected"),
+    [("REMOTE", WorkplaceType.REMOTE), ("hybrid", WorkplaceType.HYBRID), (" OnSite ", WorkplaceType.ONSITE)],
+)
+def test_workplace_type_is_case_insensitive(
+    payload: dict[str, Any], caplog: pytest.LogCaptureFixture, value: str, expected: WorkplaceType
+) -> None:
+    job = _raw_job(payload, 8184174)
+    _set_workplace(job, value)
+    with caplog.at_level(logging.WARNING, logger="canaria.spiders.greenhouse"):
+        assert _parse_job(job, BOARD).workplace_type == expected
+    assert not caplog.records
+
+
+@pytest.mark.parametrize("value", ["Flexible", "", None, 1, ["Remote"]])
+def test_unrecognised_workplace_type_warns(
+    payload: dict[str, Any], caplog: pytest.LogCaptureFixture, value: object
+) -> None:
+    job = _raw_job(payload, 8184174)
+    _set_workplace(job, value)
+    with caplog.at_level(logging.WARNING, logger="canaria.spiders.greenhouse"):
+        p = _parse_job(job, BOARD)
+    assert p.workplace_type is None
+    [message] = _gh_warnings(caplog)
+    assert "workplace_type" in message and f"board={BOARD}" in message and "job_id=8184174" in message
+    assert repr(value) in message
+
+
+def test_missing_workplace_field_on_one_job_warns_for_that_job(
+    payload: dict[str, Any], caplog: pytest.LogCaptureFixture
+) -> None:
+    broken = copy.deepcopy(payload)
+    _drop_workplace(next(j for j in broken["jobs"] if j["id"] == 8184174))
+    with caplog.at_level(logging.WARNING, logger="canaria.spiders.greenhouse"):
+        result = parse_jobs(broken, BOARD)
+    assert result.skipped == 0
+    assert _by_id(result, "8184174").workplace_type is None
+    assert _by_id(result, "8231416").workplace_type == WorkplaceType.REMOTE
+    [message] = _gh_warnings(caplog)
+    assert "workplace_type" in message and f"board={BOARD}" in message and "job_id=8184174" in message
+
+
+@pytest.mark.parametrize(
+    "strip",
+    [_drop_workplace, lambda job: job.update(metadata=None), lambda job: job.pop("metadata")],
+    ids=["entry-removed", "metadata-null", "metadata-missing"],
+)
+def test_board_without_workplace_field_warns_once(
+    payload: dict[str, Any], caplog: pytest.LogCaptureFixture, strip: Callable[[dict[str, Any]], Any]
+) -> None:
+    broken = copy.deepcopy(payload)
+    for job in broken["jobs"]:
+        strip(job)
+    with caplog.at_level(logging.WARNING, logger="canaria.spiders.greenhouse"):
+        result = parse_jobs(broken, BOARD)
+    assert result.skipped == 0
+    assert {p.workplace_type for p in result.postings} == {None}
+    [message] = _gh_warnings(caplog)
+    assert message == (
+        f"board={BOARD}: no job has metadata 'Workplace Type'; workplace_type stored as None for all 163 jobs"
+    )
+
+
+@pytest.mark.parametrize("value", [[], None, "Sales"], ids=["empty", "null", "string"])
+def test_missing_department_warns(payload: dict[str, Any], caplog: pytest.LogCaptureFixture, value: object) -> None:
+    job = _raw_job(payload, 8184174)
+    job["departments"] = value
+    with caplog.at_level(logging.WARNING, logger="canaria.spiders.greenhouse"):
+        p = _parse_job(job, BOARD)
+    assert p.department is None
+    [message] = _gh_warnings(caplog)
+    assert "department" in message and f"board={BOARD}" in message and "job_id=8184174" in message
+
+
+def test_absent_departments_key_warns(payload: dict[str, Any], caplog: pytest.LogCaptureFixture) -> None:
+    job = _raw_job(payload, 8184174)
+    del job["departments"]
+    with caplog.at_level(logging.WARNING, logger="canaria.spiders.greenhouse"):
+        assert _parse_job(job, BOARD).department is None
+    [message] = _gh_warnings(caplog)
+    assert "department" in message and "job_id=8184174" in message
+
+
+@pytest.mark.parametrize("name", ["", "  ", None])
+def test_blank_department_name_warns(payload: dict[str, Any], caplog: pytest.LogCaptureFixture, name: object) -> None:
+    job = _raw_job(payload, 8184174)
+    job["departments"][0]["name"] = name
+    with caplog.at_level(logging.WARNING, logger="canaria.spiders.greenhouse"):
+        assert _parse_job(job, BOARD).department is None
+    [message] = _gh_warnings(caplog)
+    assert "departments[0].name" in message and "job_id=8184174" in message
+
+
+def test_multiple_departments_keeps_first_and_warns(payload: dict[str, Any], caplog: pytest.LogCaptureFixture) -> None:
+    job = _raw_job(payload, 8184174)
+    job["departments"].append({"id": 1, "name": "Sales", "child_ids": [], "parent_id": None})
+    with caplog.at_level(logging.WARNING, logger="canaria.spiders.greenhouse"):
+        assert _parse_job(job, BOARD).department == "Business Development"
+    [message] = _gh_warnings(caplog)
+    assert "2 departments" in message and "'Business Development'" in message and "'Sales'" in message
+    assert "job_id=8184174" in message
+
+
+@pytest.mark.parametrize(
+    ("second", "expected"),
+    [("Remote", WorkplaceType.HYBRID), ("Hybrid", WorkplaceType.HYBRID)],
+    ids=["conflicting", "same-value"],
+)
+def test_duplicate_workplace_entries_keep_first_and_warn(
+    payload: dict[str, Any], caplog: pytest.LogCaptureFixture, second: str, expected: WorkplaceType
+) -> None:
+    job = _raw_job(payload, 8184174)
+    entry = next(m for m in job["metadata"] if m["name"] == "Workplace Type")
+    assert entry["value"] == "Hybrid"
+    job["metadata"].append({**entry, "value": second})
+    with caplog.at_level(logging.WARNING, logger="canaria.spiders.greenhouse"):
+        assert _parse_job(job, BOARD).workplace_type == expected
+    [message] = _gh_warnings(caplog)
+    assert "2 metadata 'Workplace Type' entries" in message and f"['Hybrid', {second!r}]" in message
+    assert f"board={BOARD}" in message and "job_id=8184174" in message

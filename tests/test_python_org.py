@@ -8,7 +8,7 @@ import httpx
 import pytest
 from bs4 import BeautifulSoup, Tag
 
-from canaria.models import JobPosting
+from canaria.models import JobPosting, WorkplaceType
 from canaria.spiders.python_org import (
     InvalidJobError,
     ListingEntry,
@@ -93,6 +93,17 @@ def test_known_job_values(result: ParseResult) -> None:
     assert str(p.url) == "https://www.python.org/jobs/8139/"
     assert p.posted_at == datetime.fromisoformat("2026-09-18T08:56:30.784201+00:00")
     assert p.updated_at is None
+
+
+def test_workplace_type_and_department_are_always_none(details: dict[str, str], result: ParseResult) -> None:
+    # The site has neither field. The "Telecommuting is OK" restriction is not used: it is yes/no
+    # and on 8121 contradicts the location ("Warsaw (fully remote)" with "No telecommuting").
+    assert "No telecommuting" in details["8121"]
+    assert _by_id(result, "8121").location == "Warsaw (fully remote), Poland"
+    assert len(result.postings) == 24
+    for p in result.postings:
+        assert p.workplace_type is None
+        assert p.department is None
 
 
 def test_company_with_comma_and_parentheses(result: ParseResult) -> None:

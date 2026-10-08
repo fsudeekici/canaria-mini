@@ -1,6 +1,7 @@
 import copy
 import json
 import logging
+from collections import Counter
 from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -8,7 +9,7 @@ from typing import Any
 
 import pytest
 
-from canaria.models import JobPosting
+from canaria.models import JobPosting, WorkplaceType
 from canaria.spiders.lever import (
     InvalidPayloadError,
     MissingFieldError,
@@ -231,3 +232,99 @@ def test_malformed_response_raises(
     assert exc.value.board == SITE
     assert exc.value.problem == problem
     assert str(exc.value) == f"invalid response (board={SITE}): {problem}"
+
+
+ONSITE_ID: str = "1345438c-ebfc-4fa5-b545-30c1414f317c"
+
+
+def _lever_warnings(caplog: pytest.LogCaptureFixture) -> list[str]:
+    return [r.getMessage() for r in caplog.records if r.levelno == logging.WARNING]
+
+
+def test_workplace_type(result: ParseResult) -> None:
+    assert _by_id(result, KNOWN_ID).workplace_type == WorkplaceType.HYBRID
+    assert _by_id(result, ONSITE_ID).workplace_type == WorkplaceType.ONSITE
+    assert Counter(p.workplace_type for p in result.postings) == {
+        WorkplaceType.HYBRID: 201,
+        WorkplaceType.ONSITE: 112,
+    }
+
+
+@pytest.mark.parametrize(
+    ("value", "expected"),
+    [
+        # No "remote" posting in the fixture: this one is a real posting with only the value changed.
+        ("remote", WorkplaceType.REMOTE),
+        ("Remote", WorkplaceType.REMOTE),
+        ("HYBRID", WorkplaceType.HYBRID),
+        ("OnSite", WorkplaceType.ONSITE),
+    ],
+)
+def test_workplace_type_is_case_insensitive(
+    payload: list[dict[str, Any]], caplog: pytest.LogCaptureFixture, value: str, expected: WorkplaceType
+) -> None:
+    job = _raw_job(payload, KNOWN_ID)
+    job["workplaceType"] = value
+    with caplog.at_level(logging.WARNING, logger="canaria.spiders.lever"):
+        assert _parse_job(job, SITE, COMPANY, site_has_department_field=False).workplace_type == expected
+    assert not caplog.records
+
+
+@pytest.mark.parametrize("value", ["unspecified", "on-site", "", None, 1])
+def test_unrecognised_workplace_type_warns(
+    payload: list[dict[str, Any]], caplog: pytest.LogCaptureFixture, value: object
+) -> None:
+    job = _raw_job(payload, KNOWN_ID)
+    job["workplaceType"] = value
+    with caplog.at_level(logging.WARNING, logger="canaria.spiders.lever"):
+        assert _parse_job(job, SITE, COMPANY, site_has_department_field=False).workplace_type is None
+    [message] = _lever_warnings(caplog)
+    assert "workplace_type" in message and f"site={SITE}" in message and KNOWN_ID in message
+    assert repr(value) in message
+
+
+def test_missing_workplace_type_warns(payload: list[dict[str, Any]], caplog: pytest.LogCaptureFixture) -> None:
+    job = _raw_job(payload, KNOWN_ID)
+    del job["workplaceType"]
+    with caplog.at_level(logging.WARNING, logger="canaria.spiders.lever"):
+        assert _parse_job(job, SITE, COMPANY, site_has_department_field=False).workplace_type is None
+    [message] = _lever_warnings(caplog)
+    assert "workplace_type" in message and KNOWN_ID in message
+
+
+def test_fixture_has_no_department_and_warns_once(
+    payload: list[dict[str, Any]], caplog: pytest.LogCaptureFixture
+) -> None:
+    assert not any("department" in job["categories"] for job in payload)
+    with caplog.at_level(logging.WARNING, logger="canaria.spiders.lever"):
+        result = parse_jobs(payload, SITE, COMPANY)
+    assert {p.department for p in result.postings} == {None}
+    assert _lever_warnings(caplog) == [
+        f"site={SITE}: no job has categories.department; department stored as None for all 313 jobs"
+    ]
+
+
+def test_department_is_read_when_present(payload: list[dict[str, Any]], caplog: pytest.LogCaptureFixture) -> None:
+    # Palantir doesn't set categories.department, so two real postings get one added and one left without.
+    with_department = _raw_job(payload, KNOWN_ID)
+    with_department["categories"]["department"] = " Operations "
+    without_department = _raw_job(payload, ONSITE_ID)
+
+    with caplog.at_level(logging.WARNING, logger="canaria.spiders.lever"):
+        result = parse_jobs([with_department, without_department], SITE, COMPANY)
+
+    assert _by_id(result, KNOWN_ID).department == "Operations"
+    assert _by_id(result, ONSITE_ID).department is None
+    [message] = _lever_warnings(caplog)
+    assert "categories.department" in message and f"site={SITE}" in message and ONSITE_ID in message
+
+
+@pytest.mark.parametrize("value", ["", "  ", None, 5])
+def test_blank_department_warns(payload: list[dict[str, Any]], caplog: pytest.LogCaptureFixture, value: object) -> None:
+    job = _raw_job(payload, KNOWN_ID)
+    job["categories"]["department"] = value
+    with caplog.at_level(logging.WARNING, logger="canaria.spiders.lever"):
+        result = parse_jobs([job], SITE, COMPANY)
+    assert result.postings[0].department is None
+    [message] = _lever_warnings(caplog)
+    assert "categories.department" in message and KNOWN_ID in message and repr(value) in message

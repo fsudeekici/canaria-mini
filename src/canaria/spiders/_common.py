@@ -3,7 +3,7 @@ from typing import Any
 
 from pydantic import ValidationError
 
-from canaria.models import JobPosting
+from canaria.models import JobPosting, WorkplaceType
 
 
 class MissingFieldError(ValueError):
@@ -57,6 +57,16 @@ def _require(job: dict[str, Any], key: str, board: str) -> Any:
     if value is None or value == "" or value == {}:
         raise MissingFieldError(key, board, job.get("id"))
     return value
+
+
+def _workplace_type(value: object) -> WorkplaceType | None:
+    # None when the value can't be mapped; the caller logs it with its own board and job ID.
+    if not isinstance(value, str):
+        return None
+    try:
+        return WorkplaceType(value.strip().lower())
+    except ValueError:
+        return None
 
 
 def _require_str(job: dict[str, Any], key: str, board: str) -> str:
