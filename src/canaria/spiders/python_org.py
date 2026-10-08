@@ -210,6 +210,10 @@ def parse_detail(html: str, entry: ListingEntry) -> JobPosting:
             description=_description(article, entry.id),
             posted_at=entry.posted_at,
             updated_at=None,
+            # The page has neither. "Telecommuting is OK" under Restrictions is a yes/no that
+            # contradicts the location on some jobs (8121: "Warsaw (fully remote)" + "No telecommuting").
+            workplace_type=None,
+            department=None,
         )
     except ValidationError as e:
         raise InvalidJobError(BOARD, entry.id, e) from e

@@ -5,7 +5,7 @@ from typing import Any
 import httpx
 from pydantic import ValidationError
 
-from canaria.models import JobPosting
+from canaria.models import JobPosting, WorkplaceType
 from canaria.spiders._common import (
     InvalidJobError,
     InvalidPayloadError,
@@ -14,6 +14,7 @@ from canaria.spiders._common import (
     _json_type,
     _require,
     _require_str,
+    _workplace_type,
 )
 
 __all__ = [
@@ -70,7 +71,34 @@ def _description(job: dict[str, Any], site: str, job_id: object) -> str:
     return "".join(parts)
 
 
-def _parse_job(job: dict[str, Any], site: str, company: str) -> JobPosting:
+def _workplace(job: dict[str, Any], site: str, job_id: object) -> WorkplaceType | None:
+    value = job.get("workplaceType")
+    workplace_type = _workplace_type(value)
+    if workplace_type is None:
+        logger.warning(
+            "site=%s job_id=%s: workplaceType %r not recognised; workplace_type stored as None", site, job_id, value
+        )
+    return workplace_type
+
+
+def _has_department(job: object) -> bool:
+    categories = job.get("categories") if isinstance(job, dict) else None
+    return isinstance(categories, dict) and "department" in categories
+
+
+def _department(categories: dict[str, Any], site: str, job_id: object, site_has_field: bool) -> str | None:
+    department = categories.get("department")
+    if isinstance(department, str) and department.strip():
+        return department.strip()
+    # A site that never sets the field is logged once in parse_jobs, not once per job.
+    if site_has_field:
+        logger.warning(
+            "site=%s job_id=%s: categories.department is %r; department stored as None", site, job_id, department
+        )
+    return None
+
+
+def _parse_job(job: dict[str, Any], site: str, company: str, site_has_department_field: bool = True) -> JobPosting:
     job_id = _require_str(job, "id", site)
 
     categories = _require(job, "categories", site)
@@ -106,6 +134,8 @@ def _parse_job(job: dict[str, Any], site: str, company: str) -> JobPosting:
             description=_description(job, site, job_id),
             posted_at=datetime.fromtimestamp(created_at / 1000, tz=UTC),
             updated_at=None,
+            workplace_type=_workplace(job, site, job_id),
+            department=_department(categories, site, job_id, site_has_department_field),
         )
     except ValidationError as e:
         raise InvalidJobError(site, job_id, e) from e
@@ -115,6 +145,14 @@ def parse_jobs(payload: object, site: str, company: str) -> ParseResult:
     if not isinstance(payload, list):
         raise InvalidPayloadError(site, f"expected a JSON array, got {_json_type(payload)}")
     company = _company(company, site)
+    has_department_field = any(_has_department(job) for job in payload)
+    if payload and not has_department_field:
+        logger.warning(
+            "site=%s: no job has categories.department; department stored as None for all %d jobs",
+            site,
+            len(payload),
+        )
+
     postings: list[JobPosting] = []
     skipped = 0
     for i, job in enumerate(payload):
@@ -128,7 +166,7 @@ def parse_jobs(payload: object, site: str, company: str) -> ParseResult:
             skipped += 1
             continue
         try:
-            postings.append(_parse_job(job, site, company))
+            postings.append(_parse_job(job, site, company, has_department_field))
         except (MissingFieldError, InvalidJobError) as e:
             logger.error("skipping job: %s", e)
             skipped += 1
