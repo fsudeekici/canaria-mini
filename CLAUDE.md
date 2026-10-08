@@ -1,34 +1,56 @@
 # canaria-mini
 
-Scrapes job postings from company career pages: Greenhouse, Lever, and plain HTML sites.
+Scrapes job postings (Greenhouse, Lever, Python.org) into one JobPosting model.
 
 ## Stack
-- Python ≥ 3.12 (the minimum; test on 3.12 with `.venv312`). Type hints on every function, method, and module-level variable.
-- Job data is modeled with Pydantic. Spiders return model instances, not raw dicts.
+- Python ≥ 3.12. Test on .venv312.
+- Type hints on everything. mypy strict.
+- Spiders return Pydantic models, not raw dicts.
 
-## Testing
-- Every spider has tests that run against saved real responses (fixtures captured from the live site), not invented mocks.
-- When adding a fixture, note the source URL and capture date next to it.
-- Fixtures are saved unedited, with one exception: personal contact data (people's names, e-mail addresses, phone numbers, personal profile links) is replaced with `REDACTED`. Only redact parts the spider does not parse, and list what was redacted in the fixture README.
-- Never delete, skip, or weaken an existing test (loosened assertions, broader expected values) to make it pass. Fix the code, or stop and explain why the test is wrong.
-- Never use git stash. To run tests against old code, commit first or use git worktree.
+## Decision rules
+1. Don't invent data.
+2. No silent data loss. Log or raise. [must]
+3. Don't lose good data for an optional field. Warn and use None.
+4. Shared change: check for regressions in all spiders.
+5. Never store or log personal data. [must]
+6. Show proof, not claims.
+7. Small, reversible steps.
 
-## Data integrity
-- Never silently drop a field. If a field is missing or fails to parse, log a warning that names the field, source, and posting ID, or raise an error.
-- Use `None` only for fields the model declares Optional.
+## Data
+- A warning names the field, the source and the posting ID.
+- Use None only for Optional fields.
+
+## Tests
+- Every spider has fixture tests.
+- Use real saved responses (fixtures), not invented mocks. [must]
+- Next to each fixture, note the source URL and capture date.
+- Never edit fixtures. Exception: replace personal contact data (names, emails, phones, personal profile links) with REDACTED, only in parts the spider does not parse. List it in the fixture README.
+- Write tests first. Show they fail before the fix.
+- Never delete, skip or weaken a test (looser asserts, broader expected values). Fix the code, or stop and explain. [must]
+
+## Git
+- Never use git stash. To test old code, commit first or use git worktree. [must]
+- One branch per task. Never push to main.
 
 ## Plan checklist
-Every plan must answer:
-1. Is there personal or sensitive data?
-2. Does it change anything shared (models, helpers)? What could regress?
-3. Does the source state a total count we can check against?
-4. Does any failure stop silently instead of raising or logging?
-5. How many samples did you check? If not all, say so.
-6. Does every risk you found have a test?
-7. Which decisions do you need from me?
+Every plan answers:
+1. Personal data?
+2. Shared code changed? What could regress?
+3. A total count to check against?
+4. Any silent failure?
+5. How many samples checked? If not all, say so.
+6. A test for every risk?
+7. Decisions for me?
 
-## Reporting
-After every change, report:
-1. **Changed:** what you changed and why.
-2. **Not handled:** edge cases you know are not covered.
-3. **Verified:** how you checked it (commands run, tests passed or failed, with output). If you didn't verify something, say so.
+## Report format (always this order)
+1. Result: tests, mypy, live run. Numbers only.
+2. Status: branch, commit, pushed, CI, PR.
+3. Checks (yes/no): new tests failed first? existing test changed? data dropped without warning? personal data? shared code changed? live run done?
+4. Decisions for you: question, options, your pick, which rule. Or "None".
+5. Next steps for me: what to do, the exact command or prompt, what I should see.
+6. Details: Changed, Not handled, Verified.
+
+Write for a junior developer. Simple English. Short sentences.
+
+## Learning
+When I find a missed problem, add a check for it here.
