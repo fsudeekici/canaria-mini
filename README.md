@@ -121,7 +121,7 @@ I built this project in two days to practice building software mainly by driving
 2. Review the plan against the raw data.
 3. Ask for changes, not fix by hand.
 4. Tests first. The agent shows they fail before the fix.
-5. Read the report: Changed / Not handled / Verified.
+5. Read the report: result, status, checks, decisions for me, next steps, details.
 6. Branch, PR, merge.
 
 ### What the agent got wrong, and how I caught it
@@ -136,5 +136,10 @@ I built this project in two days to practice building software mainly by driving
 - **Spot check against the live site:** job 8231416 was "Remote" on the site, but our data only said "United States". I added `workplace_type` and checked the same job again.
 - **Code audit:** I asked "where do we drop data without a warning?" This found 16 Greenhouse jobs with more than one office, and 3 more small bugs. All are fixed with tests.
 
+### Guardrails I added later
+- **CI gate:** every push and PR runs pytest and mypy on Python 3.12 in GitHub Actions, and `main` is protected.
+- **Broken-source drill:** I faked a Python.org HTML change in a fixture. The agent found the site had not changed and did not "fix" the spider; the drill showed a real break would end with 0 jobs and only logs, so the spider now raises and names the missing selector.
+- **`/add-source` command:** guides the agent through adding a new source (look, plan, fixture, tests first, report), and a test checks it still points to real CLAUDE.md sections.
+
 ### Agent context
-`CLAUDE.md` holds the rules the agent reads every session: tests on real data, never weaken a test, never drop data silently, a plan checklist, and no `git stash`.
+`CLAUDE.md` holds the rules the agent reads every session: tests on real data, never weaken a test, never drop data silently, a plan checklist, a fixed report format, and no `git stash`. A test fails if a rule marked `[must]` is lost or changed.
