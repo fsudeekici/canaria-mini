@@ -11,6 +11,7 @@ Scrapes job postings from company career pages: Greenhouse, Lever, and plain HTM
 - When adding a fixture, note the source URL and capture date next to it.
 - Fixtures are saved unedited, with one exception: personal contact data (people's names, e-mail addresses, phone numbers, personal profile links) is replaced with `REDACTED`. Only redact parts the spider does not parse, and list what was redacted in the fixture README.
 - Never delete, skip, or weaken an existing test (loosened assertions, broader expected values) to make it pass. Fix the code, or stop and explain why the test is wrong.
+- Never use git stash. To run tests against old code, commit first or use git worktree.
 
 ## Data integrity
 - Never silently drop a field. If a field is missing or fails to parse, log a warning that names the field, source, and posting ID, or raise an error.
