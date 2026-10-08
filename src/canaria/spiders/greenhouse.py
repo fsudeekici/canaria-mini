@@ -96,12 +96,30 @@ def _department(job: dict[str, Any], board: str, job_id: object) -> str | None:
     return name.strip()
 
 
+def _warn_on_multiple_offices(job: dict[str, Any], board: str, job_id: object, location: str) -> None:
+    # Only `location.name` is stored. Office names don't reliably match it ("Seoul, Korea" vs
+    # "Seoul, South Korea"), so warn on any job with several offices rather than on unmatched ones.
+    offices = job.get("offices")
+    if not isinstance(offices, list) or len(offices) < 2:
+        return
+    names = [o.get("name") if isinstance(o, dict) else o for o in offices]
+    logger.warning(
+        "board=%s job_id=%s: %d offices, location stores only %r; all offices: %r",
+        board,
+        job_id,
+        len(offices),
+        location,
+        names,
+    )
+
+
 def _parse_job(job: dict[str, Any], board: str, board_has_workplace_field: bool = True) -> JobPosting:
     job_id = _require(job, "id", board)
     location = _require(job, "location", board)
     location_name = location.get("name") if isinstance(location, dict) else None
     if not isinstance(location_name, str) or not location_name.strip():
         raise MissingFieldError("location.name", board, job_id)
+    _warn_on_multiple_offices(job, board, job_id, location_name.strip())
 
     try:
         return JobPosting(

@@ -252,10 +252,71 @@ def test_department(result: ParseResult) -> None:
     assert departments["Software Engineering"] == 42
 
 
-def test_fixture_logs_no_warnings(payload: dict[str, Any], caplog: pytest.LogCaptureFixture) -> None:
+MULTI_OFFICE_IDS: set[int] = {
+    8066835, 8114345, 8120611, 8120721, 8152131, 8152132, 8153094, 8158133,
+    8172706, 8172732, 8172734, 8172735, 8192101, 8247007, 8259224, 8259240,
+}  # fmt: skip
+
+
+def _non_office_warnings(caplog: pytest.LogCaptureFixture) -> list[str]:
+    # For tests that parse the whole fixture: the 16 multi-office warnings must be exactly the
+    # expected ones (one per job), and the rest are returned for the test's own assertions.
+    messages = _gh_warnings(caplog)
+    office = [m for m in messages if " offices, location stores only " in m]
+    assert len(office) == len(MULTI_OFFICE_IDS)
+    assert {int(m.split("job_id=")[1].split(":")[0]) for m in office} == MULTI_OFFICE_IDS
+    return [m for m in messages if m not in office]
+
+
+def test_fixture_warns_only_for_multi_office_jobs(payload: dict[str, Any], caplog: pytest.LogCaptureFixture) -> None:
     with caplog.at_level(logging.WARNING, logger="canaria.spiders.greenhouse"):
         parse_jobs(payload, BOARD)
+    assert all(r.levelno == logging.WARNING for r in caplog.records)
+    assert _non_office_warnings(caplog) == []
+
+
+def test_multiple_offices_warns(payload: dict[str, Any], caplog: pytest.LogCaptureFixture) -> None:
+    job = _raw_job(payload, 8153094)
+    with caplog.at_level(logging.WARNING, logger="canaria.spiders.greenhouse"):
+        assert _parse_job(job, BOARD).location == "United States"
+    [message] = _gh_warnings(caplog)
+    assert message == (
+        f"board={BOARD} job_id=8153094: 2 offices, location stores only 'United States'; "
+        "all offices: ['Canada', 'United States']"
+    )
+
+
+def test_single_office_does_not_warn(payload: dict[str, Any], caplog: pytest.LogCaptureFixture) -> None:
+    job = _raw_job(payload, 8184174)
+    assert len(job["offices"]) == 1
+    with caplog.at_level(logging.WARNING, logger="canaria.spiders.greenhouse"):
+        _parse_job(job, BOARD)
     assert not caplog.records
+
+
+@pytest.mark.parametrize(
+    "strip",
+    [lambda job: job.update(offices=[]), lambda job: job.update(offices=None), lambda job: job.pop("offices")],
+    ids=["empty", "null", "missing"],
+)
+def test_no_offices_does_not_warn(
+    payload: dict[str, Any], caplog: pytest.LogCaptureFixture, strip: Callable[[dict[str, Any]], Any]
+) -> None:
+    job = _raw_job(payload, 8184174)
+    strip(job)
+    with caplog.at_level(logging.WARNING, logger="canaria.spiders.greenhouse"):
+        _parse_job(job, BOARD)
+    assert not caplog.records
+
+
+def test_non_object_office_still_warns(payload: dict[str, Any], caplog: pytest.LogCaptureFixture) -> None:
+    job = _raw_job(payload, 8184174)
+    job["offices"].insert(0, "Paris")
+    with caplog.at_level(logging.WARNING, logger="canaria.spiders.greenhouse"):
+        assert _parse_job(job, BOARD).location == "London, United Kingdom"
+    [message] = _gh_warnings(caplog)
+    assert "job_id=8184174" in message and "2 offices" in message
+    assert "['Paris', 'London, United Kingdom']" in message
 
 
 @pytest.mark.parametrize(
@@ -296,7 +357,7 @@ def test_missing_workplace_field_on_one_job_warns_for_that_job(
     assert result.skipped == 0
     assert _by_id(result, "8184174").workplace_type is None
     assert _by_id(result, "8231416").workplace_type == WorkplaceType.REMOTE
-    [message] = _gh_warnings(caplog)
+    [message] = _non_office_warnings(caplog)
     assert "workplace_type" in message and f"board={BOARD}" in message and "job_id=8184174" in message
 
 
@@ -315,7 +376,7 @@ def test_board_without_workplace_field_warns_once(
         result = parse_jobs(broken, BOARD)
     assert result.skipped == 0
     assert {p.workplace_type for p in result.postings} == {None}
-    [message] = _gh_warnings(caplog)
+    [message] = _non_office_warnings(caplog)
     assert message == (
         f"board={BOARD}: no job has metadata 'Workplace Type'; workplace_type stored as None for all 163 jobs"
     )
