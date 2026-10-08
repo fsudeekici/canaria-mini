@@ -11,6 +11,7 @@ from bs4 import BeautifulSoup, Tag
 from canaria.models import JobPosting, WorkplaceType
 from canaria.spiders.python_org import (
     InvalidJobError,
+    InvalidPayloadError,
     ListingEntry,
     MissingFieldError,
     ParseResult,
@@ -245,6 +246,26 @@ def test_missing_listing_field_raises(listing_html: str, edit: Callable[[Tag], N
     assert exc.value.field == field
 
 
+@pytest.mark.parametrize(
+    ("edit", "field", "reason"),
+    [
+        (_remove(".listing-company-name"), "id", "no element matches '.listing-company-name'"),
+        (_remove_link, "id", "no link to /jobs/<id>/ in '.listing-company-name'"),
+        (_remove(".listing-location"), "location", "no element matches '.listing-location'"),
+    ],
+)
+def test_missing_listing_element_error_names_the_selector(
+    listing_html: str, edit: Callable[[Tag], None], field: str, reason: str
+) -> None:
+    # The field says which data is lost; the reason says which markup to look at.
+    li = _listing_item(listing_html, KNOWN_ID)
+    edit(li)
+    with pytest.raises(MissingFieldError) as exc:
+        _parse_entry(li)
+    assert exc.value.field == field
+    assert reason in str(exc.value)
+
+
 def test_missing_job_list_raises(listing_html: str) -> None:
     with pytest.raises(MissingFieldError) as exc:
         parse_listing(listing_html.replace("list-recent-jobs", "list-something-else"))
@@ -440,6 +461,40 @@ def test_fetch_stops_at_empty_page(
     assert result.skipped == 0
     assert any("page 2 has no jobs" in r.getMessage() for r in caplog.records)
     assert not any("repeats earlier jobs" in r.getMessage() for r in caplog.records)
+
+
+def _rename_name_class(listing_html: str) -> str:
+    # A markup change that breaks every entry: the span each job is found by gets a new class.
+    edited = listing_html.replace("listing-company-name", "listing-company-title")
+    assert edited.count("listing-company-title") == 24
+    return edited
+
+
+def test_every_listing_entry_failing_raises(
+    listing_html: str, details: dict[str, str], caplog: pytest.LogCaptureFixture
+) -> None:
+    with caplog.at_level(logging.ERROR, logger=LOGGER), pytest.raises(InvalidPayloadError) as exc:
+        parse_jobs([_rename_name_class(listing_html)], details)
+
+    assert "all 24 listed jobs failed to parse" in str(exc.value)
+    errors = [r.getMessage() for r in caplog.records if r.getMessage().startswith("skipping job")]
+    assert len(errors) == 24
+    assert all("'.listing-company-name'" in m for m in errors)
+
+
+def test_every_detail_page_failing_raises(listing_html: str) -> None:
+    with pytest.raises(InvalidPayloadError) as exc:
+        parse_jobs([listing_html], {})
+    assert "all 24 listed jobs failed to parse" in str(exc.value)
+
+
+def test_fetch_raises_when_every_job_fails(listing_html: str, details: dict[str, str]) -> None:
+    not_found = httpx.Response(404, text=PAGE_2_NOT_FOUND.read_text(encoding="utf-8"))
+    transport, requested = _transport(_rename_name_class(listing_html), details, not_found)
+    with httpx.Client(transport=transport) as client, pytest.raises(InvalidPayloadError):
+        fetch_jobs(client, delay=0)
+    # No IDs could be read, so no detail pages were requested.
+    assert requested == ["https://www.python.org/jobs/", "https://www.python.org/jobs/?page=2"]
 
 
 def test_content_after_contact_info_is_warned(

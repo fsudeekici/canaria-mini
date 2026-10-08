@@ -7,11 +7,14 @@ from canaria.models import JobPosting, WorkplaceType
 
 
 class MissingFieldError(ValueError):
-    def __init__(self, field: str, board: str, job_id: object) -> None:
+    def __init__(self, field: str, board: str, job_id: object, reason: str | None = None) -> None:
+        # `field` is the data that is lost; `reason` optionally says what in the source was missing.
         self.field = field
         self.board = board
         self.job_id = job_id
-        super().__init__(f"missing field {field!r} (board={board}, job_id={job_id})")
+        self.reason = reason
+        message = f"missing field {field!r} (board={board}, job_id={job_id})"
+        super().__init__(f"{message}: {reason}" if reason else message)
 
 
 class InvalidJobError(ValueError):

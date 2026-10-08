@@ -10,10 +10,11 @@ from bs4.element import NavigableString, Tag
 from pydantic import ValidationError
 
 from canaria.models import JobPosting
-from canaria.spiders._common import InvalidJobError, MissingFieldError, ParseResult
+from canaria.spiders._common import InvalidJobError, InvalidPayloadError, MissingFieldError, ParseResult
 
 __all__ = [
     "InvalidJobError",
+    "InvalidPayloadError",
     "ListingEntry",
     "ListingPage",
     "MissingFieldError",
@@ -35,6 +36,7 @@ MAX_PAGES: int = 50
 _JOB_HREF: re.Pattern[str] = re.compile(r"^/jobs/(\d+)/$")
 _TOTAL: re.Pattern[str] = re.compile(r"(\d+) jobs? on the Python Job Board")
 _CONTACT_HEADING: str = "Contact Info"
+_NAME_SELECTOR: str = ".listing-company-name"
 
 
 @dataclass(frozen=True)
@@ -61,7 +63,7 @@ def _clean(text: str) -> str:
 def _select_one(parent: Tag, selector: str, field: str, job_id: object) -> Tag:
     found = parent.select_one(selector)
     if found is None:
-        raise MissingFieldError(field, BOARD, job_id)
+        raise MissingFieldError(field, BOARD, job_id, f"no element matches {selector!r}")
     return found
 
 
@@ -109,12 +111,12 @@ def _location(parent: Tag, job_id: object) -> str:
 
 
 def _parse_entry(li: Tag) -> ListingEntry:
-    name_span = _select_one(li, ".listing-company-name", "id", None)
+    name_span = _select_one(li, _NAME_SELECTOR, "id", None)
     link = name_span.find("a", href=_JOB_HREF)
     href = link.get("href") if isinstance(link, Tag) else None
     match = _JOB_HREF.match(href) if isinstance(href, str) else None
     if match is None:
-        raise MissingFieldError("id", BOARD, None)
+        raise MissingFieldError("id", BOARD, None, f"no link to /jobs/<id>/ in {_NAME_SELECTOR!r}")
     job_id = match.group(1)
 
     title, company = _split_name(name_span, job_id)
@@ -267,6 +269,9 @@ def parse_jobs(listing_pages: list[str], details: dict[str, str]) -> ParseResult
 
     if skipped:
         logger.error("board=%s: skipped %d of %d jobs", BOARD, skipped, listed)
+    # Every job failing points at a markup change, not bad postings; don't return an empty result.
+    if listed and not postings:
+        raise InvalidPayloadError(BOARD, f"all {listed} listed jobs failed to parse; see the errors logged above")
     return ParseResult(postings=postings, skipped=skipped)
 
 
