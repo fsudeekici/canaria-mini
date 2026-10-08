@@ -22,6 +22,30 @@ class InvalidJobError(ValueError):
         super().__init__(f"invalid job (board={board}, job_id={job_id}): {error}")
 
 
+class InvalidPayloadError(ValueError):
+    def __init__(self, board: str, problem: str) -> None:
+        self.board = board
+        self.problem = problem
+        super().__init__(f"invalid response (board={board}): {problem}")
+
+
+def _json_type(value: object) -> str:
+    # The JSON name, which is what someone reading the raw response will see.
+    if value is None:
+        return "null"
+    if isinstance(value, bool):
+        return "boolean"
+    if isinstance(value, int | float):
+        return "number"
+    if isinstance(value, str):
+        return "string"
+    if isinstance(value, list):
+        return "array"
+    if isinstance(value, dict):
+        return "object"
+    return type(value).__name__
+
+
 @dataclass(frozen=True)
 class ParseResult:
     postings: list[JobPosting]

@@ -1,6 +1,7 @@
 import copy
 import json
 import logging
+from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
@@ -8,7 +9,13 @@ from typing import Any
 import pytest
 
 from canaria.models import JobPosting
-from canaria.spiders.lever import MissingFieldError, ParseResult, _parse_job, parse_jobs
+from canaria.spiders.lever import (
+    InvalidPayloadError,
+    MissingFieldError,
+    ParseResult,
+    _parse_job,
+    parse_jobs,
+)
 
 FIXTURE: Path = Path(__file__).parent / "fixtures" / "lever" / "palantir_postings_2026-10-08.json"
 SITE: str = "palantir"
@@ -204,3 +211,23 @@ def test_non_object_job_is_skipped_and_logged(
         f"payload[{index}] is {type(value).__name__}" in r.getMessage() and f"site={SITE}" in r.getMessage()
         for r in caplog.records
     )
+
+
+@pytest.mark.parametrize(
+    ("make", "problem"),
+    [
+        (lambda p: {"postings": p}, "expected a JSON array, got object"),
+        (lambda p: None, "expected a JSON array, got null"),
+        (lambda p: json.dumps(p), "expected a JSON array, got string"),
+        (lambda p: len(p), "expected a JSON array, got number"),
+    ],
+    ids=["object", "null", "string", "number"],
+)
+def test_malformed_response_raises(
+    payload: list[dict[str, Any]], make: Callable[[list[dict[str, Any]]], Any], problem: str
+) -> None:
+    with pytest.raises(InvalidPayloadError) as exc:
+        parse_jobs(make(payload), SITE, COMPANY)
+    assert exc.value.board == SITE
+    assert exc.value.problem == problem
+    assert str(exc.value) == f"invalid response (board={SITE}): {problem}"

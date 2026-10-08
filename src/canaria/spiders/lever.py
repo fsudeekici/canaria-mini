@@ -8,13 +8,22 @@ from pydantic import ValidationError
 from canaria.models import JobPosting
 from canaria.spiders._common import (
     InvalidJobError,
+    InvalidPayloadError,
     MissingFieldError,
     ParseResult,
+    _json_type,
     _require,
     _require_str,
 )
 
-__all__ = ["InvalidJobError", "MissingFieldError", "ParseResult", "fetch_jobs", "parse_jobs"]
+__all__ = [
+    "InvalidJobError",
+    "InvalidPayloadError",
+    "MissingFieldError",
+    "ParseResult",
+    "fetch_jobs",
+    "parse_jobs",
+]
 
 logger = logging.getLogger(__name__)
 
@@ -102,7 +111,9 @@ def _parse_job(job: dict[str, Any], site: str, company: str) -> JobPosting:
         raise InvalidJobError(site, job_id, e) from e
 
 
-def parse_jobs(payload: list[Any], site: str, company: str) -> ParseResult:
+def parse_jobs(payload: object, site: str, company: str) -> ParseResult:
+    if not isinstance(payload, list):
+        raise InvalidPayloadError(site, f"expected a JSON array, got {_json_type(payload)}")
     company = _company(company, site)
     postings: list[JobPosting] = []
     skipped = 0
