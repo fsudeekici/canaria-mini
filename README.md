@@ -68,6 +68,10 @@ redactions. mypy runs in strict mode.
 ## Project structure
 
 ```
+.github/workflows/
+  ci.yml                  CI: pytest and mypy on Python 3.12, on every push and PR
+.claude/skills/
+  add-source/SKILL.md     the /add-source command: steps to add a new job source
 src/canaria/
   models.py               JobPosting and WorkplaceType
   spiders/
@@ -78,6 +82,7 @@ src/canaria/
 scripts/
   run_all.py              run every spider, write output/postings.jsonl
 tests/
+  test_claude_md.py       fails if CLAUDE.md loses a [must] rule or a section /add-source uses
   test_greenhouse.py
   test_lever.py
   test_python_org.py
@@ -115,6 +120,8 @@ output/                   created by run_all.py (git-ignored)
 ## How I built this
 
 I built this project in two days to practice building software mainly by driving coding agents (Claude Code). I planned every change, reviewed the agent's plans and reports, and asked for proof: tests, numbers and live checks.
+
+A second Claude chat reviewed my work. Early on, it found many of these problems and taught me what to check. Later, I found more myself.
 
 ### My workflow
 1. Plan mode first. No code before I agree with the plan.
