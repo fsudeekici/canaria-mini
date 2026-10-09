@@ -50,7 +50,7 @@ Every plan answers:
 5. Next steps for me: what to do, the exact command or prompt, what I should see.
 6. Details: Changed, Not handled, Verified.
 
-Write for a junior developer. Simple English. Short sentences.
+Write so a new team member can follow it. Simple English. Short sentences. Exact commands.
 
 ## Learning
 When I find a missed problem, add a check for it here.
